@@ -9,7 +9,7 @@
 #include "logger.h"
 #include "main-ptrace.h"
 #include "string_s.h"
-#include "stub-pcap.h"
+#include "pcap/pcap.h"
 #include "stub-pfring.h"
 #include "pixie-timer.h"
 #include "main-globals.h"
@@ -199,7 +199,7 @@ rawsock_list_adapters(void)
     pcap_if_t *alldevs;
     char errbuf[PCAP_ERRBUF_SIZE];
     
-    if (PCAP.findalldevs(&alldevs, errbuf) != -1) {
+    if (pcap_findalldevs(&alldevs, errbuf) != -1) {
         int i;
         const pcap_if_t *d;
         i=0;
@@ -208,15 +208,15 @@ rawsock_list_adapters(void)
             fprintf(stderr, "ERR:libpcap: no adapters found, are you sure you are root?\n");
         }
         /* Print the list */
-        for(d=alldevs; d; d=PCAP.dev_next(d)) {
-            fprintf(stderr, " %d  %s \t", i++, PCAP.dev_name(d));
-            if (PCAP.dev_description(d))
-                fprintf(stderr, "(%s)\n", PCAP.dev_description(d));
+        for(d=alldevs; d; d=d->next) {
+            fprintf(stderr, " %d  %s \t", i++, d->name);
+            if (d->description)
+                fprintf(stderr, "(%s)\n", d->description);
             else
                 fprintf(stderr, "(No description available)\n");
         }
         fprintf(stderr,"\n");
-        PCAP.freealldevs(alldevs);
+        pcap_freealldevs(alldevs);
     } else {
         fprintf(stderr, "%s\n", errbuf);
     }
@@ -231,7 +231,7 @@ adapter_from_index(unsigned index)
     char errbuf[PCAP_ERRBUF_SIZE];
     int x;
 
-    x = PCAP.findalldevs(&alldevs, errbuf);
+    x = pcap_findalldevs(&alldevs, errbuf);
     if (x != -1) {
         const pcap_if_t *d;
 
@@ -239,9 +239,9 @@ adapter_from_index(unsigned index)
             fprintf(stderr, "ERR:libpcap: no adapters found, are you sure you are root?\n");
         }
         /* Print the list */
-        for(d=alldevs; d; d=PCAP.dev_next(d)) {
+        for(d=alldevs; d; d=d->next) {
             if (index-- == 0)
-                return PCAP.dev_name(d);
+                return d->name;
         }
         return 0;
     } else {
@@ -259,12 +259,12 @@ void
 rawsock_flush(struct Adapter *adapter)
 {
     if (adapter->sendq) {
-        PCAP.sendqueue_transmit(adapter->pcap, adapter->sendq, 0);
+//        pcap_sendqueue_transmit(adapter->pcap, adapter->sendq, 0);
 
         /* Dude, I totally forget why this step is necessary. I vaguely
          * remember there's a good reason for it though */
-        PCAP.sendqueue_destroy(adapter->sendq);
-        adapter->sendq =  PCAP.sendqueue_alloc(SENDQ_SIZE);
+//        pcap_sendqueue_destroy(adapter->sendq);
+//        adapter->sendq =  pcap_sendqueue_alloc(SENDQ_SIZE);
     }
 
 }
@@ -306,27 +306,27 @@ rawsock_send_packet(
 
     /* WINDOWS PCAP */
     if (adapter->sendq) {
-        int err;
-        struct pcap_pkthdr hdr;
-        hdr.len = length;
-        hdr.caplen = length;
-
-        err = PCAP.sendqueue_queue(adapter->sendq, &hdr, packet);
-        if (err) {
-            rawsock_flush(adapter);
-            PCAP.sendqueue_queue(adapter->sendq, &hdr, packet);
-        }
-
-        if (flush) {
-            rawsock_flush(adapter);
-        }
-
-        return 0;
+//        int err;
+//        struct pcap_pkthdr hdr;
+//        hdr.len = length;
+//        hdr.caplen = length;
+//
+//        err = pcap_sendqueue_queue(adapter->sendq, &hdr, packet);
+//        if (err) {
+//            rawsock_flush(adapter);
+//            pcap_sendqueue_queue(adapter->sendq, &hdr, packet);
+//        }
+//
+//        if (flush) {
+//            rawsock_flush(adapter);
+//        }
+//
+//        return 0;
     }
 
     /* LIBPCAP */
     if (adapter->pcap)
-        return PCAP.sendpacket(adapter->pcap, packet, length);
+        return pcap_sendpacket(adapter->pcap, packet, length);
 
     return 0;
 }
@@ -370,7 +370,7 @@ int rawsock_recv_packet(
     } else if (adapter->pcap) {
         struct pcap_pkthdr hdr;
 
-        *packet = PCAP.next(adapter->pcap, &hdr);
+        *packet = pcap_next(adapter->pcap, &hdr);
 
         if (*packet == NULL) {
             if (is_pcap_file) {
@@ -489,9 +489,9 @@ rawsock_ignore_transmits(struct Adapter *adapter, const unsigned char *adapter_m
 
     if (adapter->pcap) {
         int err;
-        err = PCAP.setdirection(adapter->pcap, PCAP_D_IN);
+        err = pcap_setdirection(adapter->pcap, PCAP_D_IN);
         if (err) {
-            PCAP.perror(adapter->pcap, "if: pcap_setdirection(IN)");
+            pcap_perror(adapter->pcap, "if: pcap_setdirection(IN)");
         } else {
             LOG(2, "if:%s: not receiving transmits\n", ifname);
         }
@@ -507,10 +507,10 @@ rawsock_close_adapter(struct Adapter *adapter)
         PFRING.close(adapter->ring);
     }
     if (adapter->pcap) {
-        PCAP.close(adapter->pcap);
+        pcap_close(adapter->pcap);
     }
     if (adapter->sendq) {
-        PCAP.sendqueue_destroy(adapter->sendq);
+//        pcap_sendqueue_destroy(adapter->sendq);
     }
 
     free(adapter);
@@ -698,8 +698,8 @@ rawsock_init_adapter(const char *adapter_name,
         LOG(1, "pcap: file: %s\n", adapter_name+5);
         is_pcap_file = 1;
 
-        adapter->pcap = PCAP.open_offline(adapter_name+5, errbuf);
-        adapter->link_type = PCAP.datalink(adapter->pcap);
+        adapter->pcap = pcap_open_offline(adapter_name+5, errbuf);
+        adapter->link_type = pcap_datalink(adapter->pcap);
     }
     /*----------------------------------------------------------------
      * PORTABILITY: LIBPCAP
@@ -708,14 +708,14 @@ rawsock_init_adapter(const char *adapter_name,
      *----------------------------------------------------------------*/
     {
         int err;
-        LOG(1, "if:%s: pcap=%s\n", adapter_name, PCAP.lib_version());
+        LOG(1, "if:%s: pcap=%s\n", adapter_name, pcap_lib_version());
         LOG(2, "if:%s: opening...\n", adapter_name);
 
         /* This reserves resources, but doesn't actually open the 
          * adapter until we call pcap_activate */
-        adapter->pcap = PCAP.create(adapter_name, errbuf);
+        adapter->pcap = pcap_create(adapter_name, errbuf);
         if (adapter->pcap == NULL) {
-            adapter->pcap = PCAP.open_live(
+            adapter->pcap = pcap_open_live(
                         adapter_name,           /* interface name */
                         65536,                  /* max packet size */
                         8,                      /* promiscuous mode */
@@ -730,33 +730,33 @@ rawsock_init_adapter(const char *adapter_name,
                 return 0;
             }
         } else {
-            err = PCAP.set_snaplen(adapter->pcap, 65536);
+            err = pcap_set_snaplen(adapter->pcap, 65536);
             if (err) {
-                PCAP.perror(adapter->pcap, "if: set_snaplen");
+                pcap_perror(adapter->pcap, "if: set_snaplen");
                 goto pcap_error;
             }
 
-            err = PCAP.set_promisc(adapter->pcap, 8);
+            err = pcap_set_promisc(adapter->pcap, 8);
             if (err) {
-                PCAP.perror(adapter->pcap, "if: set_promisc");
+                pcap_perror(adapter->pcap, "if: set_promisc");
                 goto pcap_error;
             }
 
-            err = PCAP.set_timeout(adapter->pcap, 1000);
+            err = pcap_set_timeout(adapter->pcap, 1000);
             if (err) {
-                PCAP.perror(adapter->pcap, "if: set_timeout");
+                pcap_perror(adapter->pcap, "if: set_timeout");
                 goto pcap_error;
             }
 
-            err = PCAP.set_immediate_mode(adapter->pcap, 1);
+            err = pcap_set_immediate_mode(adapter->pcap, 1);
             if (err) {
-                PCAP.perror(adapter->pcap, "if: set_immediate_mode");
+                pcap_perror(adapter->pcap, "if: set_immediate_mode");
                 goto pcap_error;
             }
 
             /* If errors happen, they aren't likely to happen above, but will
              * happen where when they are applied */
-            err = PCAP.activate(adapter->pcap);
+            err = pcap_activate(adapter->pcap);
             switch (err) {
             case 0:
                 /* drop down below */
@@ -766,7 +766,7 @@ rawsock_init_adapter(const char *adapter_name,
                 LOG(0, " [hint] need to sudo or run as root or something\n");
                 goto pcap_error;
             default:
-	            LOG(0, "if:%s: activate:%d: %s\n", adapter_name, err, PCAP.geterr(adapter->pcap));
+	            LOG(0, "if:%s: activate:%d: %s\n", adapter_name, err, pcap_geterr(adapter->pcap));
                 if (err < 0)
                     goto pcap_error;
             }
@@ -777,10 +777,10 @@ rawsock_init_adapter(const char *adapter_name,
         
 
         /* Figure out the link-type. We suport Ethernet and IP */
-        adapter->link_type = PCAP.datalink(adapter->pcap);
+        adapter->link_type = pcap_datalink(adapter->pcap);
         switch (adapter->link_type) {
         case -1:
-            PCAP.perror(adapter->pcap, "if: datalink");
+            pcap_perror(adapter->pcap, "if: datalink");
             goto pcap_error;
         case 1: /* Ethernet */
         case 12: /* IP Raw */
@@ -788,7 +788,7 @@ rawsock_init_adapter(const char *adapter_name,
         default:
             LOG(0, "pcap: unknown data link type: %u(%s)\n",
                     adapter->link_type, 
-                    PCAP.datalink_val_to_name(adapter->link_type));
+                    pcap_datalink_val_to_name(adapter->link_type));
             break;
         }
 
@@ -804,14 +804,14 @@ rawsock_init_adapter(const char *adapter_name,
     adapter->sendq = 0;
 #if defined(WIN32)
     if (is_sendq)
-        adapter->sendq = PCAP.sendqueue_alloc(SENDQ_SIZE);
+        adapter->sendq = pcap_sendqueue_alloc(SENDQ_SIZE);
 #endif
 
 
     return adapter;
 pcap_error:
     if (adapter->pcap) {
-        PCAP.close(adapter->pcap);
+        pcap_close(adapter->pcap);
         adapter->pcap = NULL;
     }
     if (adapter->pcap == NULL) {
